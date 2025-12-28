@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
 interface SizeData {
   size: number
@@ -10,77 +10,63 @@ interface SizeData {
   count: number
 }
 
-interface ExoticData {
-  is_exotic: boolean
-  avg_price: number
-  count: number
-}
+type FilterType = 'all' | 'standard' | 'exotic'
 
 export default function TrendsPage() {
-  const [sizeData, setSizeData] = useState<SizeData[]>([])
-  const [exoticData, setExoticData] = useState<ExoticData[]>([])
+  const [allSales, setAllSales] = useState<any[]>([])
+  const [filter, setFilter] = useState<FilterType>('standard')
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     async function fetchData() {
-      // Get sales grouped by size
       const { data: salesData } = await supabase
         .from('sales')
         .select(`
           sale_price,
-          bags!inner (size, is_exotic)
+          bags!inner (size, is_exotic, leather_type)
         `)
 
       if (salesData) {
-        // Group by size
-        const sizeGroups: { [key: number]: number[] } = {}
-        const exoticGroups: { [key: string]: number[] } = { exotic: [], standard: [] }
-
-        salesData.forEach((sale: any) => {
-          const size = sale.bags.size
-          const price = Number(sale.sale_price)
-          
-          if (!sizeGroups[size]) sizeGroups[size] = []
-          sizeGroups[size].push(price)
-
-          if (sale.bags.is_exotic) {
-            exoticGroups.exotic.push(price)
-          } else {
-            exoticGroups.standard.push(price)
-          }
-        })
-
-        // Calculate averages
-        const sizeAvgs: SizeData[] = Object.entries(sizeGroups)
-          .map(([size, prices]) => ({
-            size: parseInt(size),
-            avg_price: Math.round(prices.reduce((a, b) => a + b, 0) / prices.length),
-            count: prices.length
-          }))
-          .sort((a, b) => a.size - b.size)
-
-        const exoticAvgs: ExoticData[] = [
-          {
-            is_exotic: false,
-            avg_price: Math.round(exoticGroups.standard.reduce((a, b) => a + b, 0) / exoticGroups.standard.length),
-            count: exoticGroups.standard.length
-          },
-          {
-            is_exotic: true,
-            avg_price: Math.round(exoticGroups.exotic.reduce((a, b) => a + b, 0) / exoticGroups.exotic.length),
-            count: exoticGroups.exotic.length
-          }
-        ]
-
-        setSizeData(sizeAvgs)
-        setExoticData(exoticAvgs)
+        setAllSales(salesData)
       }
-
       setLoading(false)
     }
 
     fetchData()
   }, [])
+
+  // Filter sales based on selected filter
+  const filteredSales = allSales.filter((sale: any) => {
+    if (filter === 'all') return true
+    if (filter === 'standard') return !sale.bags.is_exotic
+    if (filter === 'exotic') return sale.bags.is_exotic
+    return true
+  })
+
+  // Calculate size data from filtered sales
+  const sizeGroups: { [key: number]: number[] } = {}
+  filteredSales.forEach((sale: any) => {
+    const size = sale.bags.size
+    const price = Number(sale.sale_price)
+    if (!sizeGroups[size]) sizeGroups[size] = []
+    sizeGroups[size].push(price)
+  })
+
+  const sizeData: SizeData[] = Object.entries(sizeGroups)
+    .map(([size, prices]) => ({
+      size: parseInt(size),
+      avg_price: Math.round(prices.reduce((a, b) => a + b, 0) / prices.length),
+      count: prices.length
+    }))
+    .sort((a, b) => a.size - b.size)
+
+  // Calculate exotic comparison (always from all data)
+  const exoticPrices = allSales.filter((s: any) => s.bags.is_exotic).map((s: any) => Number(s.sale_price))
+  const standardPrices = allSales.filter((s: any) => !s.bags.is_exotic).map((s: any) => Number(s.sale_price))
+  
+  const exoticAvg = exoticPrices.length ? Math.round(exoticPrices.reduce((a, b) => a + b, 0) / exoticPrices.length) : 0
+  const standardAvg = standardPrices.length ? Math.round(standardPrices.reduce((a, b) => a + b, 0) / standardPrices.length) : 0
+  const exoticPremium = standardAvg > 0 ? Math.round(((exoticAvg - standardAvg) / standardAvg) * 100) : 0
 
   function formatPrice(price: number): string {
     return new Intl.NumberFormat('en-US', {
@@ -115,9 +101,47 @@ export default function TrendsPage() {
       <div className="max-w-5xl mx-auto px-6 md:px-12 py-12 space-y-12">
         {/* Size Chart */}
         <div className="bg-white rounded-[2rem] p-8 shadow-sm">
-          <div className="mb-8">
-            <h2 className="font-serif text-2xl font-medium">Average Price by Size</h2>
-            <p className="text-warm-gray">Hermès Birkin — All Leathers</p>
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
+            <div>
+              <h2 className="font-serif text-2xl font-medium">Average Price by Size</h2>
+              <p className="text-warm-gray">
+                Hermès Birkin — {filter === 'all' ? 'All Leathers' : filter === 'standard' ? 'Standard Leather Only' : 'Exotic Only'}
+              </p>
+            </div>
+            
+            {/* Filter Toggle */}
+            <div className="flex bg-blush/50 rounded-full p-1">
+              <button
+                onClick={() => setFilter('standard')}
+                className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                  filter === 'standard' 
+                    ? 'bg-burgundy text-white' 
+                    : 'text-charcoal hover:bg-white/50'
+                }`}
+              >
+                Standard
+              </button>
+              <button
+                onClick={() => setFilter('exotic')}
+                className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                  filter === 'exotic' 
+                    ? 'bg-burgundy text-white' 
+                    : 'text-charcoal hover:bg-white/50'
+                }`}
+              >
+                🐊 Exotic
+              </button>
+              <button
+                onClick={() => setFilter('all')}
+                className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                  filter === 'all' 
+                    ? 'bg-burgundy text-white' 
+                    : 'text-charcoal hover:bg-white/50'
+                }`}
+              >
+                All
+              </button>
+            </div>
           </div>
           
           <div className="h-80">
@@ -145,14 +169,14 @@ export default function TrendsPage() {
                 />
                 <Bar 
                   dataKey="avg_price" 
-                  fill="#8B3A3A" 
+                  fill={filter === 'exotic' ? '#C9A66B' : '#8B3A3A'} 
                   radius={[8, 8, 0, 0]}
                 />
               </BarChart>
             </ResponsiveContainer>
           </div>
 
-          <div className="grid grid-cols-4 gap-4 mt-8">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4 mt-8">
             {sizeData.map((d) => (
               <div key={d.size} className="text-center p-4 bg-blush/30 rounded-xl">
                 <div className="text-sm text-warm-gray mb-1">Size {d.size}</div>
@@ -163,6 +187,12 @@ export default function TrendsPage() {
               </div>
             ))}
           </div>
+
+          {filteredSales.length === 0 && (
+            <div className="text-center py-8 text-warm-gray">
+              No sales data for this filter
+            </div>
+          )}
         </div>
 
         {/* Exotic vs Standard */}
@@ -177,23 +207,21 @@ export default function TrendsPage() {
               <div className="text-5xl mb-4">👜</div>
               <div className="text-sm uppercase tracking-wider text-warm-gray mb-2">Standard Leather</div>
               <div className="font-serif text-4xl font-semibold text-charcoal">
-                {formatPrice(exoticData[0]?.avg_price || 0)}
+                {formatPrice(standardAvg)}
               </div>
-              <div className="text-sm text-warm-gray mt-2">{exoticData[0]?.count || 0} sales</div>
+              <div className="text-sm text-warm-gray mt-2">{standardPrices.length} sales</div>
             </div>
 
             <div className="bg-gradient-to-br from-burgundy to-rose-900 rounded-2xl p-8 text-center text-white">
               <div className="text-5xl mb-4">🐊</div>
               <div className="text-sm uppercase tracking-wider opacity-80 mb-2">Exotic Leather</div>
               <div className="font-serif text-4xl font-semibold">
-                {formatPrice(exoticData[1]?.avg_price || 0)}
+                {formatPrice(exoticAvg)}
               </div>
-              <div className="text-sm opacity-80 mt-2">{exoticData[1]?.count || 0} sales</div>
-              {exoticData[0] && exoticData[1] && (
-                <div className="mt-4 bg-white/20 rounded-full px-4 py-1 inline-block text-sm">
-                  +{Math.round(((exoticData[1].avg_price - exoticData[0].avg_price) / exoticData[0].avg_price) * 100)}% premium
-                </div>
-              )}
+              <div className="text-sm opacity-80 mt-2">{exoticPrices.length} sales</div>
+              <div className="mt-4 bg-white/20 rounded-full px-4 py-1 inline-block text-sm">
+                +{exoticPremium}% premium
+              </div>
             </div>
           </div>
         </div>
@@ -216,9 +244,9 @@ export default function TrendsPage() {
             <div className="flex items-start gap-4 p-4 bg-blush/30 rounded-xl">
               <span className="text-2xl">🐊</span>
               <div>
-                <div className="font-medium mb-1">Exotic Premium is Significant</div>
+                <div className="font-medium mb-1">Exotic Premium is +{exoticPremium}%</div>
                 <p className="text-sm text-warm-gray">
-                  Crocodile and alligator skins command 100-200% premiums over standard leathers like Togo and Epsom.
+                  Crocodile and alligator skins command significant premiums over standard leathers like Togo and Epsom.
                 </p>
               </div>
             </div>
@@ -235,11 +263,9 @@ export default function TrendsPage() {
           </div>
         </div>
 
-        {/* Share Button */}
-        <div className="text-center">
-          <button className="bg-gradient-to-r from-burgundy to-rose-900 text-white px-8 py-4 rounded-full font-medium hover:scale-105 transition-transform inline-flex items-center gap-2">
-            📤 Share on Instagram
-          </button>
+        {/* Data Summary */}
+        <div className="text-center text-warm-gray text-sm">
+          Based on {allSales.length} verified auction sales • Updated in real-time
         </div>
       </div>
     </div>
