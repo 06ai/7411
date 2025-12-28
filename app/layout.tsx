@@ -22,14 +22,14 @@ export default function RootLayout({
           </Link>
           
           <div className="hidden md:flex gap-10">
+            <Link href="/guide" className="text-charcoal hover:text-burgundy transition-colors text-sm tracking-wide">
+              Price Guide
+            </Link>
             <Link href="/browse" className="text-charcoal hover:text-burgundy transition-colors text-sm tracking-wide">
               Browse
             </Link>
             <Link href="/trends" className="text-charcoal hover:text-burgundy transition-colors text-sm tracking-wide">
-              Price Trends
-            </Link>
-            <Link href="/about" className="text-charcoal hover:text-burgundy transition-colors text-sm tracking-wide">
-              About
+              Trends
             </Link>
           </div>
 
@@ -69,8 +69,8 @@ export default function RootLayout({
             <div>
               <h4 className="font-serif text-lg mb-4">Resources</h4>
               <ul className="space-y-2 text-white/70 text-sm">
-                <li><Link href="/trends" className="hover:text-gold transition-colors">Price Trends</Link></li>
-                <li><Link href="/about" className="hover:text-gold transition-colors">About</Link></li>
+                <li><Link href="/guide" className="hover:text-gold transition-colors">Price Guide</Link></li>
+                <li><Link href="/trends" className="hover:text-gold transition-colors">Trends</Link></li>
               </ul>
             </div>
             
