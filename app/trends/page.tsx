@@ -12,6 +12,9 @@ interface SizeData {
 
 type FilterType = 'all' | 'standard' | 'exotic'
 
+// Only show main sizes with significant volume
+const MAIN_SIZES = [25, 30, 35, 40]
+
 export default function TrendsPage() {
   const [allSales, setAllSales] = useState<any[]>([])
   const [filter, setFilter] = useState<FilterType>('standard')
@@ -43,10 +46,12 @@ export default function TrendsPage() {
     return true
   })
 
-  // Calculate size data from filtered sales
+  // Calculate size data from filtered sales (only main sizes)
   const sizeGroups: { [key: number]: number[] } = {}
   filteredSales.forEach((sale: any) => {
     const size = sale.bags.size
+    // Only include main sizes
+    if (!MAIN_SIZES.includes(size)) return
     const price = Number(sale.sale_price)
     if (!sizeGroups[size]) sizeGroups[size] = []
     sizeGroups[size].push(price)
@@ -176,7 +181,7 @@ export default function TrendsPage() {
             </ResponsiveContainer>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4 mt-8">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-8">
             {sizeData.map((d) => (
               <div key={d.size} className="text-center p-4 bg-blush/30 rounded-xl">
                 <div className="text-sm text-warm-gray mb-1">Size {d.size}</div>
