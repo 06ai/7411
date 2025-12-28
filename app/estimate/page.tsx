@@ -12,6 +12,8 @@ interface Multipliers {
   size: { [key: number]: MultiplierData }
   exotic: { [key: string]: MultiplierData }
   year: { [key: string]: MultiplierData }
+  color: { [key: string]: MultiplierData }
+  hardwarePremium: { [key: string]: { value: number; sampleSize: number } }
   baseline: { value: number; sampleSize: number }
 }
 
@@ -25,6 +27,16 @@ export default function EstimatePage() {
   const [isExotic, setIsExotic] = useState<boolean>(false)
   const [exoticType, setExoticType] = useState<string>('Crocodile')
   const [yearRange, setYearRange] = useState<string>('2015-2019')
+  const [hardware, setHardware] = useState<string>('Gold')
+  const [color, setColor] = useState<string>('Neutral')
+
+  // Popular colors grouped
+  const colorGroups = {
+    'Neutral': ['Black', 'Gold', 'Etoupe', 'Etain', 'Gris'],
+    'Pink/Red': ['Rose', 'Rouge', 'Pink', 'Fuchsia'],
+    'Blue': ['Bleu', 'Blue'],
+    'Other': []
+  }
 
   useEffect(() => {
     async function calculateMultipliers() {
@@ -33,7 +45,7 @@ export default function EstimatePage() {
         .select(`
           sale_price,
           sale_date,
-          bags!inner (size, is_exotic, exotic_type, year)
+          bags!inner (size, is_exotic, exotic_type, year, hardware, color)
         `)
 
       if (!salesData || salesData.length === 0) {
@@ -106,7 +118,7 @@ export default function EstimatePage() {
         }
       }
 
-      // If we don't have enough data for specific exotic types, use overall exotic
+      // Overall exotic fallback
       const allExoticPrices = exoticSales.map((s: any) => Number(s.sale_price))
       const exoticOverallMedian = median(allExoticPrices)
       exoticMultipliers['Other'] = {
@@ -140,10 +152,74 @@ export default function EstimatePage() {
         }
       }
 
+      // HARDWARE PREMIUM (fixed $ amount, not ratio)
+      const hardwarePremium: { [key: string]: { value: number; sampleSize: number } } = {}
+      
+      const goldSales = standardSales.filter((s: any) => {
+        const hw = s.bags.hardware?.toLowerCase() || ''
+        return hw.includes('gold') && !hw.includes('rose') && !hw.includes('18k')
+      })
+      const palladiumSales = standardSales.filter((s: any) => {
+        const hw = s.bags.hardware?.toLowerCase() || ''
+        return hw.includes('palladium')
+      })
+      const roseGoldSales = standardSales.filter((s: any) => {
+        const hw = s.bags.hardware?.toLowerCase() || ''
+        return hw.includes('rose gold')
+      })
+
+      const goldMedian = median(goldSales.map((s: any) => Number(s.sale_price)))
+      const palladiumMedian = median(palladiumSales.map((s: any) => Number(s.sale_price)))
+      const roseGoldMedian = median(roseGoldSales.map((s: any) => Number(s.sale_price)))
+
+      // Use palladium as baseline (0 premium), calculate premium for others
+      hardwarePremium['Palladium'] = { value: 0, sampleSize: palladiumSales.length }
+      hardwarePremium['Gold'] = { 
+        value: goldMedian - palladiumMedian, 
+        sampleSize: goldSales.length 
+      }
+      hardwarePremium['Rose Gold'] = { 
+        value: roseGoldSales.length > 2 ? roseGoldMedian - palladiumMedian : 1000, 
+        sampleSize: roseGoldSales.length 
+      }
+
+      // COLOR MULTIPLIERS (standard leather only)
+      const colorMultipliers: { [key: string]: MultiplierData } = {}
+      
+      // Group colors into categories and calculate multipliers
+      const colorCategories = {
+        'Neutral': ['black', 'gold', 'etoupe', 'etain', 'gris', 'noir', 'graphite', 'craie'],
+        'Pink/Red': ['rose', 'rouge', 'pink', 'fuchsia', 'framboise', 'red'],
+        'Blue': ['bleu', 'blue'],
+        'Green': ['vert', 'green', 'bambou'],
+        'Orange/Yellow': ['orange', 'jaune', 'yellow', 'lime', 'curry'],
+        'Brown/Tan': ['brown', 'tan', 'caramel', 'marron', 'fauve', 'naturel']
+      }
+
+      for (const [category, keywords] of Object.entries(colorCategories)) {
+        const categorySales = standardSales.filter((s: any) => {
+          const color = s.bags.color?.toLowerCase() || ''
+          return keywords.some(k => color.includes(k))
+        })
+        
+        const categoryPrices = categorySales.map((s: any) => Number(s.sale_price))
+        const categoryMedian = median(categoryPrices)
+        
+        colorMultipliers[category] = {
+          value: allStandardMedian > 0 && categoryPrices.length > 0 ? categoryMedian / allStandardMedian : 1,
+          sampleSize: categoryPrices.length
+        }
+      }
+      
+      // Add "Other" for colors that don't match
+      colorMultipliers['Other'] = { value: 1, sampleSize: 0 }
+
       setMultipliers({
         size: sizeMultipliers,
         exotic: exoticMultipliers,
         year: yearMultipliers,
+        color: colorMultipliers,
+        hardwarePremium,
         baseline
       })
       
@@ -160,19 +236,23 @@ export default function EstimatePage() {
     const baseline = multipliers.baseline.value
     const sizeMult = multipliers.size[size]?.value || 1
     const yearMult = multipliers.year[yearRange]?.value || 1
+    const colorMult = multipliers.color[color]?.value || 1
+    const hwPremium = multipliers.hardwarePremium[hardware]?.value || 0
     
     let exoticMult = 1
     if (isExotic) {
       exoticMult = multipliers.exotic[exoticType]?.value || multipliers.exotic['Other']?.value || 2.5
     }
 
-    const estimate = baseline * sizeMult * exoticMult * yearMult
+    // Calculate: (baseline × size × exotic × year × color) + hardware premium
+    const estimate = (baseline * sizeMult * exoticMult * yearMult * colorMult) + hwPremium
 
-    // Calculate confidence range (±15% for good sample sizes, ±25% for low)
+    // Calculate confidence range
     const minSampleSize = Math.min(
       multipliers.size[size]?.sampleSize || 0,
       isExotic ? (multipliers.exotic[exoticType]?.sampleSize || 0) : 100,
-      multipliers.year[yearRange]?.sampleSize || 0
+      multipliers.year[yearRange]?.sampleSize || 0,
+      multipliers.color[color]?.sampleSize || 10
     )
     
     const confidenceRange = minSampleSize >= 10 ? 0.15 : minSampleSize >= 5 ? 0.20 : 0.25
@@ -187,9 +267,13 @@ export default function EstimatePage() {
         sizeMult,
         exoticMult,
         yearMult,
+        colorMult,
+        hwPremium,
         sizeSamples: multipliers.size[size]?.sampleSize || 0,
         exoticSamples: isExotic ? (multipliers.exotic[exoticType]?.sampleSize || 0) : null,
-        yearSamples: multipliers.year[yearRange]?.sampleSize || 0
+        yearSamples: multipliers.year[yearRange]?.sampleSize || 0,
+        colorSamples: multipliers.color[color]?.sampleSize || 0,
+        hwSamples: multipliers.hardwarePremium[hardware]?.sampleSize || 0
       }
     }
   }
@@ -316,6 +400,78 @@ export default function EstimatePage() {
             </div>
           )}
 
+          {/* Hardware Selection */}
+          <div className="mb-8">
+            <label className="block text-sm font-medium text-charcoal mb-3">Hardware</label>
+            <div className="grid grid-cols-3 gap-3">
+              {['Gold', 'Palladium', 'Rose Gold'].map((hw) => (
+                <button
+                  key={hw}
+                  onClick={() => setHardware(hw)}
+                  className={`py-4 rounded-xl font-medium transition-all ${
+                    hardware === hw
+                      ? 'bg-burgundy text-white'
+                      : 'bg-blush/50 text-charcoal hover:bg-blush'
+                  }`}
+                >
+                  <div className="text-xl mb-1">
+                    {hw === 'Gold' ? '🥇' : hw === 'Palladium' ? '🥈' : '🌹'}
+                  </div>
+                  <div className="text-sm">{hw}</div>
+                </button>
+              ))}
+            </div>
+            {multipliers?.hardwarePremium[hardware] && (
+              <div className="text-xs text-warm-gray mt-2 text-right">
+                {multipliers.hardwarePremium[hardware].value > 0 
+                  ? `+${formatPrice(multipliers.hardwarePremium[hardware].value)} premium`
+                  : multipliers.hardwarePremium[hardware].value < 0
+                  ? `${formatPrice(multipliers.hardwarePremium[hardware].value)} discount`
+                  : 'Baseline'
+                } • {multipliers.hardwarePremium[hardware].sampleSize} sales
+              </div>
+            )}
+          </div>
+
+          {/* Color Selection */}
+          <div className="mb-8">
+            <label className="block text-sm font-medium text-charcoal mb-3">Color Family</label>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              {['Neutral', 'Pink/Red', 'Blue', 'Green', 'Orange/Yellow', 'Brown/Tan'].map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setColor(c)}
+                  className={`py-4 rounded-xl font-medium transition-all ${
+                    color === c
+                      ? 'bg-burgundy text-white'
+                      : 'bg-blush/50 text-charcoal hover:bg-blush'
+                  }`}
+                >
+                  <div className="text-xl mb-1">
+                    {c === 'Neutral' ? '⬛' : 
+                     c === 'Pink/Red' ? '🩷' : 
+                     c === 'Blue' ? '💙' : 
+                     c === 'Green' ? '💚' : 
+                     c === 'Orange/Yellow' ? '🧡' : '🤎'}
+                  </div>
+                  <div className="text-sm">{c}</div>
+                  <div className="text-xs opacity-75">
+                    {c === 'Neutral' ? 'Black, Gold, Etoupe' : 
+                     c === 'Pink/Red' ? 'Rose, Rouge, Fuchsia' : 
+                     c === 'Blue' ? 'Bleu shades' : 
+                     c === 'Green' ? 'Vert shades' : 
+                     c === 'Orange/Yellow' ? 'Orange, Lime' : 'Tan, Caramel'}
+                  </div>
+                </button>
+              ))}
+            </div>
+            {multipliers?.color[color] && (
+              <div className="text-xs text-warm-gray mt-2 text-right">
+                Based on {multipliers.color[color].sampleSize} sales
+              </div>
+            )}
+          </div>
+
           {/* Year Range */}
           <div className="mb-8">
             <label className="block text-sm font-medium text-charcoal mb-3">Year Produced</label>
@@ -397,6 +553,18 @@ export default function EstimatePage() {
                     <span className="text-warm-gray">{yearRange} multiplier</span>
                     <span className="font-medium">×{result.breakdown.yearMult.toFixed(2)}</span>
                   </div>
+                  <div className="flex justify-between">
+                    <span className="text-warm-gray">{color} color multiplier</span>
+                    <span className="font-medium">×{result.breakdown.colorMult.toFixed(2)}</span>
+                  </div>
+                  {result.breakdown.hwPremium !== 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-warm-gray">{hardware} hardware premium</span>
+                      <span className="font-medium">
+                        {result.breakdown.hwPremium > 0 ? '+' : ''}{formatPrice(result.breakdown.hwPremium)}
+                      </span>
+                    </div>
+                  )}
                   <div className="border-t border-blush pt-2 mt-2 flex justify-between font-medium">
                     <span>Estimated Value</span>
                     <span className="text-burgundy">{formatPrice(result.estimate)}</span>
@@ -411,7 +579,7 @@ export default function EstimatePage() {
         <div className="mt-8 text-center text-sm text-warm-gray">
           <p>
             Estimates are based on {totalSales} verified auction sales. Actual values may vary 
-            based on condition, provenance, color, and market conditions.
+            based on condition, provenance, and market conditions.
           </p>
         </div>
       </div>
